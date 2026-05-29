@@ -1,0 +1,10 @@
+# Allure / pytest artifacts
+allure-results/
+allure-report/
+.pytest_cache/
+tools/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/

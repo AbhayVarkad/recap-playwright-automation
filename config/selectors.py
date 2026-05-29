@@ -48,5 +48,6 @@ TREE_TEXT_ITEMS = "{tab_page} span.line-item-text, {tab_page} .line-item-text"
 # Bottom toolbar – scan group workflow
 BOTTOM_SCAN_GROUP = "#recap-pcv-scan-group"
 BOTTOM_SCAN_GROUP_DONE = "#recap-pcv-scan-group-done"
-SCAN_GROUP_TUTORIAL_NEXT = "button.recap-scan-group-step1:has-text('Next')"
-SCAN_GROUP_TUTORIAL_OK = "button.recap-scan-group-step2:has-text('OK')"
+SCAN_GROUP_MODAL_OVERLAY = '[data-testid="modal-overlay"]'
+SCAN_GROUP_TUTORIAL_NEXT_CLASS = "button.recap-scan-group-step1"
+SCAN_GROUP_TUTORIAL_OK_CLASS = "button.recap-scan-group-step2"

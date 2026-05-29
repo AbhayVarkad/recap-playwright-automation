@@ -53,6 +53,30 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
+## Allure report
+
+One command runs tests and opens the HTML report (uses `.bat` files — no PowerShell execution-policy change needed):
+
+```powershell
+.\run_allure.bat
+```
+
+First run downloads portable Java + Allure CLI into `tools/` (~200 MB).
+
+Regenerate report only (after tests):
+
+```powershell
+.\generate_allure_report.bat
+```
+
+**View the report** (required — do not double-click `index.html`; it will stay on "Loading..."):
+
+```powershell
+.\open_allure_report.bat
+```
+
+This starts a small local web server and opens the report in your browser.
+
 ## Run
 
 Refactored flows (recommended):
