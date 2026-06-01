@@ -1,9 +1,19 @@
-"""Project browser search verification flow (refactored from test.py)."""
+"""
+End-to-end check of the Project Browser search box.
+
+For each tab (Scans, Annotations, View States, Extracted Features) we:
+  1. Read item names from the tree
+  2. Walk them in reverse order (LIFO) — same order the original script used
+  3. Search for each name and confirm it appears in the tree
+"""
+
+import path_setup  # noqa: F401, E402
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
 from config.selectors import (
     ANNOTATIONS_TAB_PAGE,
@@ -19,20 +29,87 @@ from utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
+MIN_SCAN_COUNT = 2
+SCAN_SAMPLE_SIZE = 2
 
-async def process_stack_lifo(page, stack: list[str], label: str) -> None:
-    """Pop and log each item from a stack in LIFO order."""
-    logger.info("Processing %s stack (LIFO order)", label)
-    print(f"--- Processing {label} stack (LIFO order) ---")
-    while stack:
-        current = stack.pop()
-        logger.info("Printing/Processing %s: %s", label.rstrip("s"), current)
-        print(f"Printing/Processing {label.rstrip('s')}: {current}")
-        await page.wait_for_timeout(STACK_PROCESS_DELAY_MS)
+
+def _section(title: str) -> None:
+    """Print a visible section header in the console."""
+    print(f"\n--- {title} ---")
+
+
+async def _pause_between_stack_items(page: Page) -> None:
+    await page.wait_for_timeout(STACK_PROCESS_DELAY_MS)
+
+
+async def _walk_names_lifo(page: Page, names: list[str], what: str) -> None:
+    """Process names last-to-first, with a short pause between each (mirrors manual QA steps)."""
+    _section(f"Processing {what} (LIFO — last name first)")
+    for name in reversed(names):
+        logger.info("Processing %s: %s", what.rstrip("s"), name)
+        print(f"  → {name}")
+        await _pause_between_stack_items(page)
+
+
+async def _collect_and_report(kind: str, names: list[str]) -> None:
+    """Log every name we picked up from the tree."""
+    _section(f"Fetching {kind}")
+    for name in names:
+        logger.info("Stored %s: %s", kind.rstrip("s"), name)
+        print(f"  stored: {name}")
+    print(f"  ({len(names)} total)\n")
+
+
+async def _verify_search_hits(
+    browser: ProjectBrowserPage,
+    page: Page,
+    *,
+    tab_label: str,
+    names: list[str],
+    stack_label: str,
+    open_tab: Callable[[], Awaitable[None]],
+    tab_page_selector: str,
+    use_feature_inputs: bool = False,
+) -> tuple[int, int]:
+    """Run the LIFO walk, then search for each name in the Project Browser."""
+    await _collect_and_report(stack_label, names)
+    await _walk_names_lifo(page, names, stack_label)
+    return await browser.verify_names_via_search(
+        tab_label,
+        names,
+        open_tab,
+        tab_page_selector,
+        use_feature_inputs=use_feature_inputs,
+    )
+
+
+def _print_summary(
+    scan: tuple[int, int],
+    annotations: tuple[int, int],
+    view_states: tuple[int, int],
+    features: tuple[int, int],
+) -> tuple[int, int]:
+    scan_ok, scan_n = scan
+    ann_ok, ann_n = annotations
+    vs_ok, vs_n = view_states
+    feat_ok, feat_n = features
+
+    passed = scan_ok + ann_ok + vs_ok + feat_ok
+    total = scan_n + ann_n + vs_n + feat_n
+
+    _section("Search verification summary")
+    print(f"  Scans:              {scan_ok}/{scan_n}")
+    print(f"  Annotations:        {ann_ok}/{ann_n}")
+    print(f"  View States:        {vs_ok}/{vs_n}")
+    print(f"  Extracted Features: {feat_ok}/{feat_n}")
+    print(f"  Overall:            {passed}/{total}")
+
+    logger.info("Overall search verification: %d/%d passed", passed, total)
+    return passed, total
 
 
 async def run_project_browser_flow() -> tuple[int, int]:
-    """Execute the full project browser verification workflow."""
+    """Open the viewer, exercise each Project Browser tab, return (passed, total)."""
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=False)
         context = await new_viewer_context(browser)
@@ -41,142 +118,88 @@ async def run_project_browser_flow() -> tuple[int, int]:
         viewer = ViewerPage(page)
         project_browser = ProjectBrowserPage(page)
 
+        # Load the viewer twice so panels settle after refresh (existing behaviour).
         await viewer.open_and_refresh_for_project_browser()
 
-        logger.info("Clicking scan group in project browser")
+        # --- Scans (we only check the first two names) ---
         await project_browser.click_scan_group()
+        all_scans = await project_browser.collect_scan_names()
 
-        logger.info("Fetching scans")
-        print("--- Fetching scans ---")
-        scan_stack: list[str] = []
-        scan_names = await project_browser.collect_scan_names()
-
-        if len(scan_names) < 2:
+        if len(all_scans) < MIN_SCAN_COUNT:
             raise RuntimeError(
-                "Expected at least 2 scans after clicking scan group, "
-                f"found {len(scan_names)}: {scan_names}"
+                f"Need at least {MIN_SCAN_COUNT} scans under the scan group; "
+                f"got {len(all_scans)}: {all_scans}"
             )
 
-        for name in scan_names[:2]:
-            scan_stack.append(name)
-            logger.info("Stored in stack: %s", name)
-            print(f"Stored in stack: {name}")
-
-        print(f"\nTotal scans stored in stack: {len(scan_stack)}\n")
-
-        scan_names_for_verify = list(scan_stack)
-        await process_stack_lifo(page, scan_stack, "scan")
-
-        scan_passed, scan_total = await project_browser.verify_names_via_search(
-            "Scans",
-            scan_names_for_verify,
-            project_browser.click_scan_group,
-            SCANS_TAB_PAGE,
+        scans_to_check = all_scans[:SCAN_SAMPLE_SIZE]
+        scan_results = await _verify_search_hits(
+            project_browser,
+            page,
+            tab_label="Scans",
+            names=scans_to_check,
+            stack_label="scans",
+            open_tab=project_browser.click_scan_group,
+            tab_page_selector=SCANS_TAB_PAGE,
         )
 
+        # --- Annotations ---
         await project_browser.open_annotations_tab()
-
-        logger.info("Fetching annotations")
-        print("--- Fetching annotations ---")
-        annotation_stack: list[str] = []
         annotation_names = await project_browser.collect_annotation_names()
-
-        for name in annotation_names:
-            annotation_stack.append(name)
-            logger.info("Stored annotation in stack: %s", name)
-            print(f"Stored annotation in stack: {name}")
-
-        print(f"\nTotal annotations stored in stack: {len(annotation_stack)}\n")
-
-        annotation_names_for_verify = list(annotation_stack)
-        await process_stack_lifo(page, annotation_stack, "annotation")
-
-        annotation_passed, annotation_total = await project_browser.verify_names_via_search(
-            "Annotations",
-            annotation_names_for_verify,
-            project_browser.open_annotations_tab,
-            ANNOTATIONS_TAB_PAGE,
+        annotation_results = await _verify_search_hits(
+            project_browser,
+            page,
+            tab_label="Annotations",
+            names=annotation_names,
+            stack_label="annotations",
+            open_tab=project_browser.open_annotations_tab,
+            tab_page_selector=ANNOTATIONS_TAB_PAGE,
         )
 
+        # --- View States ---
         await project_browser.open_view_states_tab()
         await project_browser.click_view_states_group()
-
-        logger.info("Fetching view tests")
-        print("--- Fetching view tests ---")
-        view_test_stack: list[str] = []
-        view_test_names = await project_browser.collect_view_state_names()
-
-        for name in view_test_names:
-            view_test_stack.append(name)
-            logger.info("Stored view test in stack: %s", name)
-            print(f"Stored view test in stack: {name}")
-
-        print(f"\nTotal view tests stored in stack: {len(view_test_stack)}\n")
-
-        view_test_names_for_verify = list(view_test_stack)
-        await process_stack_lifo(page, view_test_stack, "view test")
-
-        view_test_passed, view_test_total = await project_browser.verify_names_via_search(
-            "View States",
-            view_test_names_for_verify,
-            project_browser.prepare_view_states_tab,
-            VIEW_STATES_TAB_PAGE,
+        view_state_names = await project_browser.collect_view_state_names()
+        view_state_results = await _verify_search_hits(
+            project_browser,
+            page,
+            tab_label="View States",
+            names=view_state_names,
+            stack_label="view states",
+            open_tab=project_browser.prepare_view_states_tab,
+            tab_page_selector=VIEW_STATES_TAB_PAGE,
         )
 
+        # --- Extracted Features ---
         await project_browser.open_extracted_features_tab()
         await project_browser.click_extracted_features_group()
-
-        logger.info("Fetching extracted features")
-        print("--- Fetching extracted features ---")
-        extracted_features_stack: list[str] = []
-        extracted_feature_names = await project_browser.collect_extracted_feature_names()
-
-        for name in extracted_feature_names:
-            extracted_features_stack.append(name)
-            logger.info("Stored extracted feature in stack: %s", name)
-            print(f"Stored extracted feature in stack: {name}")
-
-        print(
-            f"\nTotal extracted features stored in stack: {len(extracted_features_stack)}\n"
-        )
-
-        extracted_names_for_verify = list(extracted_features_stack)
-        await process_stack_lifo(page, extracted_features_stack, "extracted feature")
-
-        extracted_passed, extracted_total = await project_browser.verify_names_via_search(
-            "Extracted Features",
-            extracted_names_for_verify,
-            project_browser.prepare_extracted_features_tab,
-            EXTRACTED_FEATURES_TAB_PAGE,
+        feature_names = await project_browser.collect_extracted_feature_names()
+        feature_results = await _verify_search_hits(
+            project_browser,
+            page,
+            tab_label="Extracted Features",
+            names=feature_names,
+            stack_label="extracted features",
+            open_tab=project_browser.prepare_extracted_features_tab,
+            tab_page_selector=EXTRACTED_FEATURES_TAB_PAGE,
             use_feature_inputs=True,
         )
 
-        total_passed = (
-            scan_passed + annotation_passed + view_test_passed + extracted_passed
+        passed, total = _print_summary(
+            scan_results, annotation_results, view_state_results, feature_results
         )
-        total_checked = scan_total + annotation_total + view_test_total + extracted_total
 
-        logger.info("Search verification summary: %d/%d overall", total_passed, total_checked)
-        print("\n=== Search verification summary ===")
-        print(f"Scans:              {scan_passed}/{scan_total}")
-        print(f"Annotations:        {annotation_passed}/{annotation_total}")
-        print(f"View States:        {view_test_passed}/{view_test_total}")
-        print(f"Extracted Features: {extracted_passed}/{extracted_total}")
-        print(f"Overall:            {total_passed}/{total_checked}")
-
-        logger.info("Refreshing page after all tasks completed")
-        print("--- Refreshing page after all tasks completed ---")
+        _section("Refreshing page after all checks")
         await viewer.reload()
         await viewer.wait_for_project_browser_ready()
 
         await browser.close()
-        return total_passed, total_checked
+        return passed, total
 
 
 async def main() -> None:
     setup_logging()
-    total_passed, total_checked = await run_project_browser_flow()
-    if total_passed != total_checked:
+    passed, total = await run_project_browser_flow()
+    if passed != total:
         raise SystemExit(1)
 
 

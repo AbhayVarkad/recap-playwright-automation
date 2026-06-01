@@ -21,6 +21,7 @@ Python + Playwright automation for Autodesk Recap viewer flows.
 - `config/selectors.py` - centralized CSS selectors
 - `config/settings.py` - shared runtime settings (viewer URL, timeouts, permissions)
 - `utils/browser.py` - Playwright context creation helper
+- `scripts/allure_report.py` - run tests and Allure report
 - `test.py` - legacy monolithic project browser script
 - `test2.py` - legacy monolithic bottom toolbar script
 
@@ -53,30 +54,6 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-## Allure report
-
-One command runs tests and opens the HTML report (uses `.bat` files — no PowerShell execution-policy change needed):
-
-```powershell
-.\run_allure.bat
-```
-
-First run downloads portable Java + Allure CLI into `tools/` (~200 MB).
-
-Regenerate report only (after tests):
-
-```powershell
-.\generate_allure_report.bat
-```
-
-**View the report** (required — do not double-click `index.html`; it will stay on "Loading..."):
-
-```powershell
-.\open_allure_report.bat
-```
-
-This starts a small local web server and opens the report in your browser.
-
 ## Run
 
 Refactored flows (recommended):
@@ -93,6 +70,12 @@ python test.py
 python test2.py
 ```
 
+Pytest + Allure (writes results for the report step at the end of this README):
+
+```bash
+python -m pytest tests/test_recap_allure.py -v --alluredir=allure-results
+```
+
 ## Notes
 
 - The automation currently launches Chromium in headed mode (`headless=False`).
@@ -104,3 +87,50 @@ python test2.py
 - Change viewer target URL in `config/settings.py` (`VIEWER_URL`).
 - Update selectors in `config/selectors.py` if UI changes.
 - Adjust timeout constants in `config/settings.py` as needed.
+
+## Allure report (last step)
+
+Run your tests first. Allure HTML reporting comes **after** the test run.
+
+You need **Java 17+** and the **Allure CLI**. If they are not installed, bootstrap once (downloads into `tools/`, ~200 MB):
+
+```bash
+python scripts/allure_report.py --setup-tools
+```
+
+From the project root:
+
+```bash
+# 1) Run tests and write results
+python scripts/allure_report.py test
+
+# 2a) View report — serve straight from results (easiest)
+python scripts/allure_report.py serve
+
+# 2b) Or build static HTML, then open it
+python scripts/allure_report.py generate
+python scripts/allure_report.py open
+```
+
+**One shot** — run tests, then start the Allure server (always do this last):
+
+```bash
+python scripts/allure_report.py all
+```
+
+Equivalent manual commands:
+
+```bash
+python -m pytest tests/test_recap_allure.py -v --alluredir=allure-results
+allure serve allure-results
+```
+
+Do not double-click `allure-report\index.html` — use `serve` or `open` so the browser can load report data.
+
+| Command | What it does |
+|--------|----------------|
+| `test` | Pytest with `--alluredir=allure-results` |
+| `generate` | `allure-results` → `allure-report/` |
+| `serve` | Local server from `allure-results` (no separate generate step) |
+| `open` | Local server from `allure-report/` (after `generate`) |
+| `all` | `test` then `serve` |

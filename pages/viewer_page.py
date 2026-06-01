@@ -19,9 +19,13 @@ class ViewerPage(BasePage):
         await self.page.reload(wait_until="domcontentloaded")
 
     async def wait_for_common_load(self) -> None:
-        """Wait for standard load and network idle states."""
+        """Wait for the document load event.
+
+        networkidle is intentionally omitted: the Recap viewer keeps long-lived
+        connections open and may never reach idle, which leads to long hangs or
+        flaky "page closed" errors during wait_for_load_state.
+        """
         await self.page.wait_for_load_state("load", timeout=DEFAULT_TIMEOUT_MS)
-        await self.page.wait_for_load_state("networkidle", timeout=DEFAULT_TIMEOUT_MS)
 
     async def wait_for_project_browser_ready(self) -> None:
         """Wait until the project browser scan tree is visible."""

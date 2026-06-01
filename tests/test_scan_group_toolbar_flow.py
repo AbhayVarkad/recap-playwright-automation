@@ -1,5 +1,7 @@
 """Bottom toolbar scan group workflow (refactored from test2.py)."""
 
+import path_setup  # noqa: F401, E402
+
 import asyncio
 import logging
 
